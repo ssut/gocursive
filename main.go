@@ -10,6 +10,8 @@ import (
 )
 
 func main() {
+	initLogger()
+
 	app := cli.NewApp()
 	app.Name = "Gocursive"
 	app.Usage = "Recursive autoindex downloader"
