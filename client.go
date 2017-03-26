@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Sirupsen/logrus"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/valyala/fasthttp"
 	"golang.org/x/sys/unix"
@@ -28,7 +29,8 @@ func NewClient(config *ClientConfig) *Client {
 	var client *Client
 
 	httpClient := &fasthttp.Client{
-		Name: "Gocursive",
+		Name:            "Gocursive",
+		MaxConnsPerHost: 10240,
 	}
 
 	if !strings.HasSuffix(config.url.Path, "/") {
@@ -54,14 +56,23 @@ func (c *Client) checkWritable() bool {
 }
 
 func (c *Client) collectUrls(target *url.URL, wg *sync.WaitGroup) {
+	defer wg.Done()
 	statusCode, body, err := c.httpClient.Get(nil, target.String())
 	if err != nil {
 		log.Panic(err)
 	}
 	if statusCode != fasthttp.StatusOK {
-		log.Fatalf("Unexpected status code: %d", statusCode)
+		log.Errorf("Unexpected status code: %d (from %s)", statusCode, target.String())
+		return
 	}
-	log.Debugf("Hit: %s", target.Path)
+	hasIndexOf := strings.Contains(string(body), "Index of ")
+	log.WithFields(logrus.Fields{
+		"statusCode": statusCode,
+		"hasIndexOf": hasIndexOf,
+	}).Debugf("Hit: %s", target.Path)
+	if !hasIndexOf {
+		return
+	}
 
 	dirs, files := getURLs(target.String(), body)
 	for _, dir := range dirs {
@@ -78,8 +89,6 @@ func (c *Client) collectUrls(target *url.URL, wg *sync.WaitGroup) {
 	for _, file := range files {
 		c.files = append(c.files, file)
 	}
-
-	wg.Done()
 }
 
 func (c *Client) collectUrlsFromIndex() {
@@ -143,6 +152,7 @@ func (c *Client) download(filepath string, url *url.URL, sem <-chan bool) (err e
 
 func (c *Client) start() {
 	var current int64 = 0
+	// this channel works as like a semaphore
 	sem := make(chan bool, c.config.concurrent)
 	go func() {
 		total := len(c.files)
