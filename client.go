@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Sirupsen/logrus"
@@ -55,8 +54,9 @@ func (c *Client) checkWritable() bool {
 	return unix.Access(c.config.outputDir, unix.W_OK) == nil
 }
 
-func (c *Client) collectUrls(target *url.URL, wg *sync.WaitGroup) {
-	defer wg.Done()
+func (c *Client) collectUrls(target *url.URL, sem chan bool) {
+	sem <- true
+	defer func() { <-sem }()
 	statusCode, body, err := c.httpClient.Get(nil, target.String())
 	if err != nil {
 		log.Panic(err)
@@ -77,14 +77,13 @@ func (c *Client) collectUrls(target *url.URL, wg *sync.WaitGroup) {
 	dirs, files := getURLs(target.String(), body)
 	for _, dir := range dirs {
 		c.directories = append(c.directories, dir)
-		wg.Add(1)
 		next := &url.URL{
 			Scheme:   target.Scheme,
 			Host:     target.Host,
 			Path:     dir,
 			RawQuery: target.RawQuery,
 		}
-		go c.collectUrls(next, wg)
+		go c.collectUrls(next, sem)
 	}
 	for _, file := range files {
 		c.files = append(c.files, file)
@@ -92,10 +91,12 @@ func (c *Client) collectUrls(target *url.URL, wg *sync.WaitGroup) {
 }
 
 func (c *Client) collectUrlsFromIndex() {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go c.collectUrls(c.config.url, &wg)
-	wg.Wait()
+	sem := make(chan bool, c.config.concurrent)
+	c.collectUrls(c.config.url, sem)
+
+	for i := 0; i < cap(sem); i++ {
+		sem <- true
+	}
 }
 
 func (c *Client) createDirectories() {
