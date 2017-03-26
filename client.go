@@ -124,6 +124,7 @@ func (c *Client) download(filepath string, url *url.URL, sem <-chan bool) (err e
 
 func (c *Client) start() {
 
+
 	sem := make(chan bool, c.config.concurrent)
 	for _, url := range c.files {
 		sem <- true
@@ -150,4 +151,5 @@ func (c *Client) Run() {
 	c.createDirectories()
 	log.Info("Preparing for downloads..")
 	c.start()
+	log.Info("Done.")
 }
