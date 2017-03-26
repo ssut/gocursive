@@ -1,7 +1,9 @@
 package main
 
+import "net/url"
+
 type ClientConfig struct {
-	url        string
+	url        *url.URL
 	concurrent int
-	outputdir  string
+	outputDir  string
 }

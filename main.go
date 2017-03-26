@@ -31,12 +31,11 @@ func main() {
 					return cli.NewExitError("URL must be given", 1)
 				}
 
-				requrl := c.Args().Get(0)
 				conns := c.Int("concurrent")
 				target := c.String("output-dir")
 				cpus := c.Int("cpus")
 
-				_, err := url.ParseRequestURI(requrl)
+				requrl, err := url.ParseRequestURI(c.Args().Get(0))
 				if err != nil {
 					return cli.NewExitError("Invalid URL format", 1)
 				}
@@ -53,14 +52,14 @@ func main() {
 				log.Info("Number of CPUs to use: ", cpus)
 
 				if c.Bool("debug") {
-					logrus.SetLevel(logrus.DebugLevel)
+					log.Level = logrus.DebugLevel
 					log.Info("Enabled debug mode")
 				}
 
 				config := &ClientConfig{
 					url:        requrl,
 					concurrent: conns,
-					outputdir:  target,
+					outputDir:  target,
 				}
 
 				client := NewClient(config)

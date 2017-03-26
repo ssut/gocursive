@@ -57,8 +57,8 @@ func getURLs(from string, body []byte) (dirs []string, files []*url.URL) {
 				continue
 			}
 
-			// Pass if url is starts with ".."
-			if strings.Index(p, "..") == 0 {
+			// Pass if url is starts with "..", or is an absolute url
+			if strings.Index(p, "..") == 0 || strings.Index(p, "://") > -1 {
 				continue
 			}
 
@@ -67,8 +67,12 @@ func getURLs(from string, body []byte) (dirs []string, files []*url.URL) {
 				dir := path.Join(u.Path, p)
 				dirs = append(dirs, dir)
 			} else {
-				file, _ := url.Parse(from)
-				file.Path = path.Join(file.Path, p)
+				file := &url.URL{
+					Scheme:   u.Scheme,
+					Host:     u.Host,
+					Path:     path.Join(u.Path, p),
+					RawQuery: u.RawQuery,
+				}
 				files = append(files, file)
 			}
 		}
