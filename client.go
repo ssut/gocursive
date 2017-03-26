@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -9,8 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/cheggaaa/pb"
+	humanize "github.com/dustin/go-humanize"
 	"github.com/valyala/fasthttp"
 	"golang.org/x/sys/unix"
 )
@@ -20,6 +20,8 @@ type Client struct {
 	httpClient  *fasthttp.Client
 	directories []string
 	files       []*url.URL
+	bytesTotal  int64
+	bytesRecv   int64
 }
 
 func NewClient(config *ClientConfig) *Client {
@@ -40,6 +42,8 @@ func NewClient(config *ClientConfig) *Client {
 		httpClient:  httpClient,
 		directories: []string{},
 		files:       []*url.URL{},
+		bytesTotal:  0,
+		bytesRecv:   0,
 	}
 
 	return client
@@ -86,6 +90,12 @@ func (c *Client) collectUrlsFromIndex() {
 }
 
 func (c *Client) createDirectories() {
+	// if no directories found but have files to download
+	if len(c.directories) == 0 && len(c.files) > 0 {
+		path := filepath.Join(c.config.outputDir, filepath.Dir(c.files[0].Path))
+		os.MkdirAll(path, 0755)
+	}
+
 	for _, dir := range c.directories {
 		path := filepath.Join(c.config.outputDir, dir)
 		os.MkdirAll(path, 0755)
@@ -107,13 +117,22 @@ func (c *Client) download(filepath string, url *url.URL, sem <-chan bool) (err e
 	}
 	defer resp.Body.Close()
 
-	// progressbar
-	prefix := fmt.Sprintf("%s", url.Path)
-	bar := pb.New(int(resp.ContentLength)).SetUnits(pb.U_BYTES).Prefix(prefix)
-	bar.Start()
-	defer bar.Finish()
+	size := resp.ContentLength
+	c.bytesTotal += size
 
-	reader := bar.NewProxyReader(resp.Body)
+	reader := &ProxyReader{Reader: resp.Body}
+	go func() {
+		var current int64 = 0
+		for i := reader.Total(); i < size; i = reader.Total() {
+			current = i - current
+			c.bytesRecv += current
+			current = i
+			time.Sleep(500 * time.Millisecond)
+		}
+		current = reader.Total() - current
+		c.bytesRecv += current
+	}()
+
 	_, err = io.Copy(out, reader)
 	if err != nil {
 		return err
@@ -123,11 +142,19 @@ func (c *Client) download(filepath string, url *url.URL, sem <-chan bool) (err e
 }
 
 func (c *Client) start() {
-
-
+	var current int64 = 0
 	sem := make(chan bool, c.config.concurrent)
+	go func() {
+		total := len(c.files)
+		for {
+			log.Infof("[%d/%d] %s/%s", current, total, humanize.Bytes(uint64(c.bytesRecv)), humanize.Bytes(uint64(c.bytesTotal)))
+			time.Sleep(time.Second)
+		}
+	}()
+
 	for _, url := range c.files {
 		sem <- true
+		current++
 		path, _ := filepath.Abs(filepath.Join(c.config.outputDir, url.Path))
 		go c.download(path, url, sem)
 	}
