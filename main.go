@@ -48,8 +48,8 @@ func main() {
 
 				runtime.GOMAXPROCS(cpus)
 
-				log.Info("URL: ", requrl)
-				log.Info("Connections: ", conns)
+				log.Info("Requested URL: ", requrl)
+				log.Info("Number of simultaneous downloads: ", conns)
 				log.Info("Target directory: ", target)
 				log.Info("Number of CPUs to use: ", cpus)
 
