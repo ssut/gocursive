@@ -1,12 +1,16 @@
 package main
 
 import (
+	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	"github.com/cheggaaa/pb"
 	"github.com/valyala/fasthttp"
 	"golang.org/x/sys/unix"
 )
@@ -88,8 +92,48 @@ func (c *Client) createDirectories() {
 	}
 }
 
+func (c *Client) download(filepath string, url *url.URL, sem <-chan bool) (err error) {
+	defer func() { <-sem }()
+	out, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	// fasthttp currently does not support streaming for response content
+	resp, err := http.Get(url.String())
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// progressbar
+	prefix := fmt.Sprintf("%s", url.Path)
+	bar := pb.New(int(resp.ContentLength)).SetUnits(pb.U_BYTES).Prefix(prefix)
+	bar.Start()
+	defer bar.Finish()
+
+	reader := bar.NewProxyReader(resp.Body)
+	_, err = io.Copy(out, reader)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (c *Client) start() {
-	var wg sync.WaitGroup
+
+	sem := make(chan bool, c.config.concurrent)
+	for _, url := range c.files {
+		sem <- true
+		path, _ := filepath.Abs(filepath.Join(c.config.outputDir, url.Path))
+		go c.download(path, url, sem)
+	}
+
+	for i := 0; i < cap(sem); i++ {
+		sem <- true
+	}
 }
 
 func (c *Client) Run() {
