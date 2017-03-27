@@ -27,6 +27,7 @@ func main() {
 				cli.IntFlag{Name: "concurrent, c", Value: 20},
 				cli.StringFlag{Name: "output-dir, o", Value: "."},
 				cli.IntFlag{Name: "cpus", Value: runtime.NumCPU(), Usage: "Number of CPUs to use"},
+				cli.BoolFlag{Name: "skip-existing, s"},
 			},
 			Action: func(c *cli.Context) error {
 				if c.NArg() == 0 {
@@ -59,9 +60,10 @@ func main() {
 				}
 
 				config := &ClientConfig{
-					url:        requrl,
-					concurrent: conns,
-					outputDir:  target,
+					url:          requrl,
+					concurrent:   conns,
+					outputDir:    target,
+					skipExisting: c.Bool("skip-existing"),
 				}
 
 				client := NewClient(config)

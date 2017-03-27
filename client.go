@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Client type is used for internal values
 type Client struct {
 	config      *ClientConfig
 	httpClient  *fasthttp.Client
@@ -24,6 +26,7 @@ type Client struct {
 	bytesRecv   int64
 }
 
+// NewClient method creates a new Gocursive client
 func NewClient(config *ClientConfig) *Client {
 	var client *Client
 
@@ -114,12 +117,6 @@ func (c *Client) createDirectories() {
 
 func (c *Client) download(filepath string, url *url.URL, sem <-chan bool) (err error) {
 	defer func() { <-sem }()
-	out, err := os.Create(filepath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
 	// fasthttp currently does not support streaming for response content
 	resp, err := http.Get(url.String())
 	if err != nil {
@@ -128,11 +125,22 @@ func (c *Client) download(filepath string, url *url.URL, sem <-chan bool) (err e
 	defer resp.Body.Close()
 
 	size := resp.ContentLength
+	if c.config.skipExisting {
+		if f, err := os.Stat(filepath); err == nil {
+			if size == f.Size() {
+				log.WithFields(logrus.Fields{
+					"size": humanize.Bytes(uint64(size)),
+				}).Debugf("File exists: %s", url.Path)
+				return nil
+			}
+		}
+	}
+
 	c.bytesTotal += size
 
 	reader := &ProxyReader{Reader: resp.Body}
 	go func() {
-		var current int64 = 0
+		var current int64
 		for i := reader.Total(); i < size; i = reader.Total() {
 			current = i - current
 			c.bytesRecv += current
@@ -143,22 +151,42 @@ func (c *Client) download(filepath string, url *url.URL, sem <-chan bool) (err e
 		c.bytesRecv += current
 	}()
 
+	out, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	started := time.Now()
 	_, err = io.Copy(out, reader)
 	if err != nil {
 		return err
 	}
 
+	elapsed := time.Since(started)
+	log.WithFields(logrus.Fields{
+		"elapsed": elapsed.String(),
+		"size":    humanize.Bytes(uint64(size)),
+	}).Debugf("Downloaded: %s", url.Path)
+
 	return nil
 }
 
 func (c *Client) start() {
-	var current int64 = 0
+	var current int64
+
 	// this channel works as like a semaphore
 	sem := make(chan bool, c.config.concurrent)
 	go func() {
+		var diff int64
 		total := len(c.files)
 		for {
-			log.Infof("[%d/%d] %s/%s", current, total, humanize.Bytes(uint64(c.bytesRecv)), humanize.Bytes(uint64(c.bytesTotal)))
+			diff = c.bytesRecv - diff
+			log.WithFields(logrus.Fields{
+				"speed":   fmt.Sprintf("%s/s", humanize.Bytes(uint64(diff))),
+				"running": len(sem),
+			}).Infof("[%d/%d] %s/%s", current, total, humanize.Bytes(uint64(c.bytesRecv)), humanize.Bytes(uint64(c.bytesTotal)))
+			diff = c.bytesRecv
 			time.Sleep(time.Second)
 		}
 	}()
@@ -175,6 +203,7 @@ func (c *Client) start() {
 	}
 }
 
+// Run method starts job
 func (c *Client) Run() {
 	log.Infof("Checking permission for: %s", c.config.outputDir)
 	if !c.checkWritable() {
