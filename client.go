@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Sirupsen/logrus"
@@ -136,20 +137,14 @@ func (c *Client) download(filepath string, url *url.URL, sem <-chan bool) (err e
 		}
 	}
 
-	c.bytesTotal += size
+	atomic.AddInt64(&c.bytesTotal, size)
 
+	var received int64
 	reader := &ProxyReader{Reader: resp.Body}
-	go func() {
-		var current int64
-		for i := reader.Total(); i < size; i = reader.Total() {
-			current = i - current
-			c.bytesRecv += current
-			current = i
-			time.Sleep(500 * time.Millisecond)
-		}
-		current = reader.Total() - current
-		c.bytesRecv += current
-	}()
+	reader.SetReadListener(func(diff int64) {
+		received += diff
+		atomic.AddInt64(&c.bytesRecv, diff)
+	})
 
 	out, err := os.Create(filepath)
 	if err != nil {
@@ -177,19 +172,23 @@ func (c *Client) start() {
 
 	// this channel works as like a semaphore
 	sem := make(chan bool, c.config.concurrent)
-	go func() {
+	go func(current *int64, sem chan bool) {
+		time.Sleep(time.Second)
 		var diff int64
 		total := len(c.files)
 		for {
-			diff = c.bytesRecv - diff
+			recv := atomic.LoadInt64(&c.bytesRecv)
+			diff = recv - diff
 			log.WithFields(logrus.Fields{
 				"speed":   fmt.Sprintf("%s/s", humanize.Bytes(uint64(diff))),
 				"running": len(sem),
-			}).Infof("[%d/%d] %s/%s", current, total, humanize.Bytes(uint64(c.bytesRecv)), humanize.Bytes(uint64(c.bytesTotal)))
+			}).Infof(
+				"[%d/%d] %s/%s", *current, total,
+				humanize.Bytes(uint64(recv)), humanize.Bytes(uint64(atomic.LoadInt64(&c.bytesTotal))))
 			diff = c.bytesRecv
 			time.Sleep(time.Second)
 		}
-	}()
+	}(&current, sem)
 
 	for _, url := range c.files {
 		sem <- true
