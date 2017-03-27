@@ -1,12 +1,13 @@
 package main
 
-import "github.com/Sirupsen/logrus"
+import (
+	"github.com/Sirupsen/logrus"
+	prefixed "github.com/x-cray/logrus-prefixed-formatter"
+)
 
 var log = logrus.New()
 
 func initLogger() {
-	formatter := &logrus.TextFormatter{
-		FullTimestamp: true,
-	}
+	formatter := new(prefixed.TextFormatter)
 	log.Formatter = formatter
 }
